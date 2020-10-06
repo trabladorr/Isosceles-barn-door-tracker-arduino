@@ -1,0 +1,57 @@
+Code for an Isosceles Barn Door Star Tracker using an Arduino Nano, a 28BYJ-48 stepper motor, and a ULN2003 driver board.
+
+The purpose of this code is to remove the "tangent error" present in non-curved rod Barn Door trackers, by varying the motor rotation speed according to position.
+
+The stepper code is Tyler Henry's CheapStepper library (https://github.com/tyhenry/CheapStepper), also licenced under GPL v3.0, with all timing functionality removed, to better control processor cycles.
+
+
+
+The mechanics this code was designed to run on are mainly 3d printed, and the design will be available at Thingiverse... soon!
+
+However, this should be easily reconfigured to operate any design that uses the same electronics. (I used Wolfram Alpha for most of the complex maths)
+To do so, first we need to know the characteristics of the mechanical design:
+
+The lead screw used was placed at an arm radius of A = 196.101mm from the hinge, with a starting angle of θi = 5.1 degrees due to arm thickness. 
+The 150mm lead screw used has a lead value of l = 2 mm, the motor has an advertised (and disputed) n = 4096 steps per revolution, and the gear reduction between the motor and the lead screw nut is G = (27*23*18)/(9*9*9) = 15.333:1
+We are using the sidereal day of Ts = 86,164.1 sec for the full 360 degrees of travel of the arm.
+
+
+
+We need to find out how much time must pass between each stepper motor step, as a function of the number of steps already taken. Some steps done on scrap paper are omitted (and the paper is scrapped).
+We need to find the derivative of time in regards to current screw length, where a is angular velocity,  and x = 2*Ar^2  (entered in Wolfram Alpha):
+W:	d(arccos((t^2 -x)/(x))/a)/d(t)
+
+Let's calculate the resulting equation after substituting, result's units are in sec/step (s  = is stepper steps per mm of lead screw travel. Also using n = 4096, l = 2, G = 15.333, Ts = 86,164.1sec, A = 196.101mm)
+
+W:	(2 b)/(a sqrt(1 - (b^2 - x)^2/x^2) x),  x=2*(196.101*s)^2, a=2*pi/86164.1, s = 4096*15.33333/2
+
+The substitution result gives the seconds required for each stepper step, given b steps have occured since θ = 0. This has some approximation applied already, but I think it's very tiny.
+W:	(27426.9 b)/sqrt(1.51688×10^14 b^2 - b^4)
+
+
+
+I was afraid that the tiny Nano wouldn't be able to calculate this equation in under 2 msec, given its ALU doesn't even do native division (https://forum.arduino.cc/index.php?topic=92684.0), so I thought a polynomial regression was in order. Thankfully, Wolfram Alpha can handle this as well! 
+After using the previous equation to calculate a few select points(~12-127mm), I entered the points of {[steps taken],[step time in usec]}:
+W:	fit quadratic {{400000,2228.08},{800000,2231.61},{1200000,2237.55},{1600000,2245.93},{2000000,2256.86},{2400000,2270.43},{2800000,2286.78},{3200000,2306.1},{3600000,2328.6},{4000000,2354.54}}
+
+This gives us the quadratic function result, with approximation errors of under a microsecond:
+2228.55 - 3.2547×10^-6 x + 8.64583×10^-12 x^2
+
+This takes the Nano just over a hundred usec to calculate, meaning it will spend over 90% of its time sleeping.
+
+
+
+To have a way of testing the execution of the code, I used the following calculations:
+
+If we were using a curved Screw, then its rotation period would be Tr_θ = Ts*l/(2*A*pi)
+That gives a Tr_0 = 139.861 sec per revolution at θ = 0 degrees, same as for lead screw.
+
+To calculate the rotation period for higher angles, we have to take into account the tangent error:
+The rotation speed will follow this curve:
+W:	plot sqrt(2)*sin(θ)/(2sqrt(1-cos(θ))), 0 < θ <= pi/2
+To get the required lead screw nut rotation period at a specified angle:
+W:	T/(sqrt(2)*sin(θ)/(2sqrt(1-cos(θ)))), T = 139.861 ,  θ = 5.1/180*pi 
+This gives us 140 sec per lead screw nut revolution at θi = 5.1 degrees; by the time a rotation completes the angle will have changed and so will the revolution time, but at small angles the tangent error is really small, and timing by hand and eye is not very accurate anyways :P . If the first rotation time is off, then it can be adjusted back to expected by modifying the trim on the interstep variable in the main loop.
+
+
+Since a big source of errors can be the accuracy of the Arduino quartz crystal, it might be useful to compare its time elapsed over a longer period of time to something more accurate. The accuracy also depends on temperature, and at that point we are chasing dragons, and should just get better hardware! 
